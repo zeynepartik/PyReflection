@@ -18,7 +18,7 @@ from src.parsers.rinex_parser import parse_rinex_obs
 
 # --- AYARLAR ---
 RINEX_FILE = os.path.join(PROJECT_ROOT, "data", "PTLD00AUS_R_20220010000_01D_30S_MO.rnx")
-TARGET_SAT = "J05"  # İncelenecek uydu (örn. G05, R10, E25, C03)
+TARGET_SAT = "J03"  # İncelenecek uydu (örn. G05, R10, E25, C03)
 
 
 def main():

@@ -110,5 +110,5 @@ if __name__ == "__main__":
                 # Saniye ve dakika görünecek şekilde formatlıyoruz
                 df_display = df_snr.copy()
                 df_display['epoch'] = df_display['epoch'].dt.strftime('%Y-%m-%d %H:%M:%S')
-                print(df_display.head())
+                print(df_display.head(10))
                 print(f"Bitti! Toplam {len(df_snr)} adet SNR verisi başarıyla çekildi.")

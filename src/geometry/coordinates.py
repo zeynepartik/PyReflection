@@ -78,3 +78,24 @@ def calculate_elevation_azimuth(e, n, u):
         az_deg += 360
         
     return el_deg, az_deg
+
+def lagrange_interpolate(x_nodes, y_nodes, x_target):
+    """
+    Lagrange yöntemiyle enterpolasyon yapar.
+    x_nodes: Komşu SP3 epokları (saniye cinsinden zaman listesi) [10 adet]
+    y_nodes: Bu epoklara ait uydu koordinatları (X, Y veya Z listesi) [10 adet]
+    x_target: Koordinatını bulmak istediğimiz kayıp RINEX epoğu (saniye cinsinden)
+    """
+    n = len(x_nodes)
+    interpolated_value = 0.0
+    
+    # Lagrange Polinom Formülü Uygulaması
+    for i in range(n):
+        term = y_nodes[i]
+        for j in range(n):
+            if i != j:
+                # Pay ve paydayı birbirine oranlıyoruz
+                term = term * (x_target - x_nodes[j]) / (x_nodes[i] - x_nodes[j])
+        interpolated_value += term
+        
+    return interpolated_value

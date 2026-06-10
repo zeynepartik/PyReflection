@@ -23,6 +23,15 @@ from src.parsers.sp3_parser import parse_sp3
 
 DEFAULT_OUTPUT_DIR = os.path.join("data", "processed")
 DEFAULT_OUTPUT_STEM = "final_rnx_sp3_merged"
+OUTPUT_COLUMNS = [
+    "epoch",
+    "constellation",
+    "satID",
+    "elevation",
+    "azimuth",
+    "obsType",
+    "obsValue",
+]
 OutputFormat = Literal["parquet", "csv"]
 
 
@@ -140,7 +149,7 @@ def _process_satellite(
     total_sp3 = len(sp3_seconds)
 
     rnx_by_epoch = {
-        epoch: group[["obsType", "obsValue"]].to_numpy()
+        epoch: group[["constellation", "obsType", "obsValue"]].to_numpy()
         for epoch, group in sat_rnx_df.groupby("epoch", sort=True)
     }
 
@@ -166,18 +175,16 @@ def _process_satellite(
         e, n, u = _ecef_to_enu_fast(interp_x, interp_y, interp_z, enu_ref)
         elevation, azimuth = calculate_elevation_azimuth(e, n, u)
 
-        for obs_type, snr in rnx_rows:
+        for constellation, obs_type, obs_value in rnx_rows:
             results.append(
                 {
                     "epoch": rnx_epoch,
+                    "constellation": constellation,
                     "satID": target_sat,
-                    "X": interp_x,
-                    "Y": interp_y,
-                    "Z": interp_z,
                     "elevation": elevation,
                     "azimuth": azimuth,
                     "obsType": obs_type,
-                    "SNR": snr,
+                    "obsValue": obs_value,
                 }
             )
 
@@ -245,7 +252,9 @@ def merge_rinex_sp3(
     Returns
     -------
     pandas.DataFrame
-        Merged dataset sorted by epoch, satID, and obsType.
+        Merged dataset with columns ``epoch``, ``constellation``, ``satID``,
+        ``elevation``, ``azimuth``, ``obsType``, and ``obsValue``,
+        sorted by epoch, satID, and obsType.
     """
     start_time = time.perf_counter()
 
@@ -282,11 +291,6 @@ def merge_rinex_sp3(
     for sat_idx, target_sat in enumerate(unique_sp3_sat_list, start=1):
         if progress_callback is not None:
             progress_callback(target_sat, sat_idx, total_sats)
-        elif verbose:
-            progress_pct = sat_idx / total_sats * 100
-            print(
-                f">>> Uydu işleniyor: {target_sat} ({sat_idx}/{total_sats}) — %{progress_pct:.1f}"
-            )
 
         sat_sp3_df = sp3_by_sat.get(target_sat)
         if sat_sp3_df is None:
@@ -297,7 +301,7 @@ def merge_rinex_sp3(
             _process_satellite(target_sat, sat_sp3_df, sat_rnx_df, enu_ref)
         )
 
-    final_df = pd.DataFrame(interpolated_results)
+    final_df = pd.DataFrame(interpolated_results, columns=OUTPUT_COLUMNS)
     final_df = final_df.sort_values(
         by=["epoch", "satID", "obsType"],
         kind="mergesort",

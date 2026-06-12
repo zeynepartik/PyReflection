@@ -20,10 +20,11 @@ from src.geometry.coordinates import (
 )
 from src.parsers.rinex_parser import parse_rinex_obs
 from src.parsers.sp3_parser import parse_sp3
+from src.processing.arc_detector import detect_arcs_for_satellite
 
 DEFAULT_OUTPUT_DIR = os.path.join("data", "processed")
 DEFAULT_OUTPUT_STEM = "final_rnx_sp3_merged"
-OUTPUT_COLUMNS = [
+MERGE_COLUMNS = [
     "epoch",
     "constellation",
     "satID",
@@ -31,6 +32,17 @@ OUTPUT_COLUMNS = [
     "azimuth",
     "obsType",
     "obsValue",
+]
+OUTPUT_COLUMNS = [
+    "epoch",
+    "constellation",
+    "satID",
+    "arcNo",
+    "arcType",
+    "obsType",
+    "obsValue",
+    "elevation",
+    "azimuth",
 ]
 OutputFormat = Literal["parquet", "csv"]
 
@@ -191,6 +203,17 @@ def _process_satellite(
     return results
 
 
+def _apply_arc_detection(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    arc_processed = [
+        detect_arcs_for_satellite(group)
+        for _, group in df.groupby("satID", sort=False)
+    ]
+    return pd.concat(arc_processed, ignore_index=True).reindex(columns=OUTPUT_COLUMNS)
+
+
 def _resolve_output_path(
     output_path: str | None,
     output_format: OutputFormat,
@@ -231,7 +254,8 @@ def merge_rinex_sp3(
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> pd.DataFrame:
     """
-    Interpolate SP3 orbits onto RINEX epochs and merge with SNR observations.
+    Interpolate SP3 orbits onto RINEX epochs, merge with SNR observations,
+    and assign arcNo/arcType per satellite and obsType.
 
     Parameters
     ----------
@@ -253,8 +277,8 @@ def merge_rinex_sp3(
     -------
     pandas.DataFrame
         Merged dataset with columns ``epoch``, ``constellation``, ``satID``,
-        ``elevation``, ``azimuth``, ``obsType``, and ``obsValue``,
-        sorted by epoch, satID, and obsType.
+        ``arcNo``, ``arcType``, ``obsType``, ``obsValue``, ``elevation``,
+        and ``azimuth``, sorted by epoch, satID, and obsType.
     """
     start_time = time.perf_counter()
 
@@ -301,7 +325,15 @@ def merge_rinex_sp3(
             _process_satellite(target_sat, sat_sp3_df, sat_rnx_df, enu_ref)
         )
 
-    final_df = pd.DataFrame(interpolated_results, columns=OUTPUT_COLUMNS)
+    merged_df = pd.DataFrame(interpolated_results, columns=MERGE_COLUMNS)
+    merged_df = merged_df.sort_values(
+        by=["epoch", "satID", "obsType"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
+    if verbose:
+        print(">>> Arc numaralari tespit ediliyor...")
+    final_df = _apply_arc_detection(merged_df)
     final_df = final_df.sort_values(
         by=["epoch", "satID", "obsType"],
         kind="mergesort",
@@ -315,10 +347,11 @@ def merge_rinex_sp3(
 
     if verbose:
         elapsed = time.perf_counter() - start_time
-        print("\n--- ENTERPOLASYON VE BİRLEŞTİRME TAMAMLANDI ---")
+        print("\n--- ENTERPOLASYON, BIRLESTIRME VE ARC TESPITI TAMAMLANDI ---")
         print(final_df.head())
         print(
-            f"\nBaşarılı! Toplam {len(final_df)} adet saniyelik veri enterpole edilerek SNR ile birleştirildi."
+            f"\nBasarili! Toplam {len(final_df)} satir enterpole edilerek "
+            f"SNR ve arc bilgileriyle birlestirildi."
         )
         print(f"Çıktı dosyası ({output_format}): {resolved_output_path}")
         print(f"Toplam çalışma süresi: {elapsed:.2f} saniye ({elapsed / 60:.2f} dakika)")

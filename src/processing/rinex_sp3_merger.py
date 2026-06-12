@@ -18,6 +18,7 @@ from src.geometry.coordinates import (
     calculate_elevation_azimuth,
     ecef_to_geodetic,
 )
+from src.gnss.frequency import get_obs_wavelength_m
 from src.parsers.rinex_parser import parse_rinex_obs
 from src.parsers.sp3_parser import parse_sp3
 from src.processing.arc_detector import detect_arcs_for_satellite
@@ -40,6 +41,7 @@ OUTPUT_COLUMNS = [
     "arcNo",
     "arcType",
     "obsType",
+    "wavelength",
     "obsValue",
     "elevation",
     "azimuth",
@@ -203,6 +205,23 @@ def _process_satellite(
     return results
 
 
+def _add_wavelength_column(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    df = df.copy()
+    df["wavelength"] = [
+        get_obs_wavelength_m(constellation, obs_type, sat_id=sat_id)
+        for constellation, obs_type, sat_id in zip(
+            df["constellation"],
+            df["obsType"],
+            df["satID"],
+            strict=True,
+        )
+    ]
+    return df
+
+
 def _apply_arc_detection(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
@@ -211,7 +230,9 @@ def _apply_arc_detection(df: pd.DataFrame) -> pd.DataFrame:
         detect_arcs_for_satellite(group)
         for _, group in df.groupby("satID", sort=False)
     ]
-    return pd.concat(arc_processed, ignore_index=True).reindex(columns=OUTPUT_COLUMNS)
+    result = pd.concat(arc_processed, ignore_index=True)
+    result = _add_wavelength_column(result)
+    return result.reindex(columns=OUTPUT_COLUMNS)
 
 
 def _resolve_output_path(
@@ -277,8 +298,8 @@ def merge_rinex_sp3(
     -------
     pandas.DataFrame
         Merged dataset with columns ``epoch``, ``constellation``, ``satID``,
-        ``arcNo``, ``arcType``, ``obsType``, ``obsValue``, ``elevation``,
-        and ``azimuth``, sorted by epoch, satID, and obsType.
+        ``arcNo``, ``arcType``, ``obsType``, ``wavelength``, ``obsValue``,
+        ``elevation``, and ``azimuth``, sorted by epoch, satID, and obsType.
     """
     start_time = time.perf_counter()
 

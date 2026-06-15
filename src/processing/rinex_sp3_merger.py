@@ -205,6 +205,16 @@ def _process_satellite(
     return results
 
 
+def _convert_obs_value_to_linear(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert obsValue from SNR_dB to linear SNR_VV: SNR_VV = 10^(SNR_dB / 20)."""
+    if df.empty:
+        return df
+
+    df = df.copy()
+    df["obsValue"] = np.power(10.0, df["obsValue"] / 20.0)
+    return df
+
+
 def _add_wavelength_column(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -298,7 +308,8 @@ def merge_rinex_sp3(
     -------
     pandas.DataFrame
         Merged dataset with columns ``epoch``, ``constellation``, ``satID``,
-        ``arcNo``, ``arcType``, ``obsType``, ``wavelength``, ``obsValue``,
+        ``arcNo``, ``arcType``, ``obsType``, ``wavelength``, ``obsValue`` (linear
+        SNR_VV scale, converted from RINEX SNR_dB via ``10^(SNR_dB/20)``),
         ``elevation``, and ``azimuth``, sorted by epoch, satID, and obsType.
     """
     start_time = time.perf_counter()
@@ -347,6 +358,7 @@ def merge_rinex_sp3(
         )
 
     merged_df = pd.DataFrame(interpolated_results, columns=MERGE_COLUMNS)
+    merged_df = _convert_obs_value_to_linear(merged_df)
     merged_df = merged_df.sort_values(
         by=["epoch", "satID", "obsType"],
         kind="mergesort",

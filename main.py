@@ -71,7 +71,7 @@ def main():
         print(">>> 2. Dereceden Polinom ile SNR trendden arındırıldı.")
 
         # 2. Lomb-Scargle Hesaplama
-        h_grid, lsp_power = calculate_lombscargle(
+        h_grid, spectral_amplitude = calculate_lombscargle(
             elevation=elevations, 
             detrended_snr=d_snr, 
             wavelength=wavelength_val, 
@@ -80,11 +80,11 @@ def main():
             precision=0.01
         )
         
-        print(">>> Astropy Lomb-Scargle periyodogramı matris yöntemiyle hesaplandı.")
+        print(">>> Astropy Lomb-Scargle spektral genlik spektrumu hesaplandı.")
         
-        dominant_h = h_grid[np.argmax(lsp_power)]
-        peak_p = np.max(lsp_power)
-        print(f"\n[ANALİZ SONUCU]: Tespit Edilen Baskın Reflektör Yüksekliği: {dominant_h:.2f} metre! (Güç: {peak_p:.2f})")
+        dominant_h = h_grid[np.argmax(spectral_amplitude)]
+        peak_amp = np.max(spectral_amplitude)
+        print(f"\n[ANALİZ SONUCU]: Tespit Edilen Baskın Reflektör Yüksekliği: {dominant_h:.2f} metre! (Spektral genlik: {peak_amp:.4f})")
     else:
         print("Uyarı: Filtreleme sonrası veri seti boş kaldığı için Faz 6 testi atlandı!")
 

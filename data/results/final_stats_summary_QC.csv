@@ -1,0 +1,3 @@
+Grup,N,VLT [m],Korelasyon (r),R^2,Regresyon eğimi,KOH / RMSE [m],Bias / Ortalama hata [m],Std [m]
+SWG (0.00-0.20 m),782,4.9906,0.9489,0.9004,0.9378,0.0972,0.0061,0.097
+LWG (0.20-0.50 m),943,4.899,0.964,0.9293,0.9599,0.0814,-0.0007,0.0815

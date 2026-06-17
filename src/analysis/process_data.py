@@ -13,6 +13,7 @@ be added next to :func:`analyze_arcs`.
 from __future__ import annotations
 
 import os
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import numpy as np
@@ -20,11 +21,23 @@ import pandas as pd
 
 from src.analysis.filters import filter_dataset
 from src.analysis.lomb_scargle import calculate_lombscargle, detrend_snr
+from src.processing.rinex_sp3_merger import (
+    build_output_stem_from_rinex_path,
+    merge_rinex_sp3,
+)
 
 OutputFormat = Literal["parquet", "csv"]
 
 DEFAULT_RESULTS_DIR = os.path.join("data", "results")
 RESULT_PREFIX = "results_"
+
+# Default locations for raw inputs and processed outputs.
+DEFAULT_DATA_DIR = "data"
+DEFAULT_PROCESSED_DIR = os.path.join("data", "processed")
+
+# Default observation/orbit sampling intervals encoded in the file names.
+DEFAULT_RINEX_INTERVAL = "30S"
+DEFAULT_SP3_INTERVAL = "05M"
 
 # Columns that uniquely identify a single arc time series.
 GROUP_KEYS = ["satID", "obsType", "arcNo"]
@@ -264,3 +277,157 @@ def analyze_arcs(
             print(f">>> Sonuclar kaydedildi ({output_format}): {output_path}")
 
     return result_df
+
+
+# ---------------------------------------------------------------------------
+# Batch RINEX/SP3 -> parquet conversion
+# ---------------------------------------------------------------------------
+
+
+def _parse_date(value: str | date | datetime) -> date:
+    """Normalize a date-like input to a :class:`datetime.date`.
+
+    Accepts ``datetime``/``date`` objects or ISO strings such as
+    ``"2022-01-01"``.
+    """
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    raise TypeError(f"Desteklenmeyen tarih turu: {type(value)!r}")
+
+
+def _iter_year_doy(start_date: date, end_date: date) -> list[tuple[int, int]]:
+    """Return a list of ``(year, day_of_year)`` for every day in the range.
+
+    The range is inclusive on both ends.
+    """
+    if end_date < start_date:
+        raise ValueError(
+            f"Bitis tarihi ({end_date}) baslangic tarihinden ({start_date}) once olamaz."
+        )
+
+    days: list[tuple[int, int]] = []
+    current = start_date
+    while current <= end_date:
+        days.append((current.year, current.timetuple().tm_yday))
+        current += timedelta(days=1)
+    return days
+
+
+def _build_rinex_filename(station: str, year: int, doy: int, interval: str) -> str:
+    """Build a RINEX v3 file name, e.g. ``PTLD00AUS_R_20220010000_01D_30S_MO.rnx``."""
+    return f"{station}_R_{year}{doy:03d}0000_01D_{interval}_MO.rnx"
+
+
+def _build_sp3_filename(product: str, year: int, doy: int, interval: str) -> str:
+    """Build an SP3 file name, e.g. ``COD0MGXFIN_20220010000_01D_05M_ORB.SP3``."""
+    return f"{product}_{year}{doy:03d}0000_01D_{interval}_ORB.SP3"
+
+
+def batch_merge_to_parquet(
+    station: str,
+    sp3_product: str,
+    start_date: str | date | datetime,
+    end_date: str | date | datetime,
+    *,
+    data_dir: str = DEFAULT_DATA_DIR,
+    output_dir: str = DEFAULT_PROCESSED_DIR,
+    output_format: OutputFormat = "parquet",
+    rinex_interval: str = DEFAULT_RINEX_INTERVAL,
+    sp3_interval: str = DEFAULT_SP3_INTERVAL,
+    skip_existing: bool = False,
+    verbose: bool = True,
+) -> list[str]:
+    """Batch-convert RINEX/SP3 pairs into processed parquet (or CSV) files.
+
+    For each day in the inclusive ``[start_date, end_date]`` range, the matching
+    RINEX observation file and SP3 orbit file are located under ``data_dir`` and
+    merged via :func:`src.processing.rinex_sp3_merger.merge_rinex_sp3`. Each
+    merged dataset is written to ``output_dir`` (``data/processed`` by default).
+
+    Parameters
+    ----------
+    station : str
+        RINEX station/site name, e.g. ``"PTLD00AUS"``.
+    sp3_product : str
+        SP3 product name, e.g. ``"COD0MGXFIN"``.
+    start_date, end_date : str | datetime.date | datetime.datetime
+        Inclusive date range. Strings must be ISO formatted (``"YYYY-MM-DD"``).
+    data_dir : str, default ``"data"``
+        Directory holding the raw RINEX (``.rnx``) and SP3 (``.SP3``) files.
+    output_dir : str, default ``data/processed``
+        Directory where the processed files are written.
+    output_format : {"parquet", "csv"}, default "parquet"
+        Output file format.
+    rinex_interval, sp3_interval : str
+        Sampling interval tokens encoded in the file names (``"30S"``/``"05M"``).
+    skip_existing : bool, default False
+        When ``True`` days whose output file already exists are skipped.
+    verbose : bool, default True
+        Print per-day progress information.
+
+    Returns
+    -------
+    list[str]
+        Paths of the processed files that were written (or already existed when
+        ``skip_existing`` is ``True``).
+    """
+    start = _parse_date(start_date)
+    end = _parse_date(end_date)
+    days = _iter_year_doy(start, end)
+
+    extension = ".parquet" if output_format == "parquet" else ".csv"
+    os.makedirs(output_dir, exist_ok=True)
+
+    if verbose:
+        print(
+            f">>> Toplu donusum baslatiliyor: istasyon={station}, "
+            f"sp3={sp3_product}, {start} -> {end} ({len(days)} gun)"
+        )
+
+    written_paths: list[str] = []
+
+    for index, (year, doy) in enumerate(days, start=1):
+        rinex_name = _build_rinex_filename(station, year, doy, rinex_interval)
+        sp3_name = _build_sp3_filename(sp3_product, year, doy, sp3_interval)
+        rinex_path = os.path.join(data_dir, rinex_name)
+        sp3_path = os.path.join(data_dir, sp3_name)
+
+        if verbose:
+            print(f"\n[{index}/{len(days)}] {year} DOY {doy:03d}")
+
+        output_stem = build_output_stem_from_rinex_path(rinex_path)
+        output_path = os.path.join(output_dir, f"{output_stem}{extension}")
+
+        if skip_existing and os.path.exists(output_path):
+            if verbose:
+                print(f">>> Atlandi (zaten mevcut): {output_path}")
+            written_paths.append(output_path)
+            continue
+
+        missing = [p for p in (rinex_path, sp3_path) if not os.path.exists(p)]
+        if missing:
+            if verbose:
+                for path in missing:
+                    print(f">>> Uyari: Dosya bulunamadi, gun atlaniyor: {path}")
+            continue
+
+        merge_rinex_sp3(
+            sp3_path=sp3_path,
+            rinex_path=rinex_path,
+            output_path=output_path,
+            output_format=output_format,
+            verbose=verbose,
+        )
+        written_paths.append(output_path)
+
+    if verbose:
+        print(
+            f"\n>>> Toplu donusum tamamlandi: {len(written_paths)}/{len(days)} "
+            f"dosya islendi. Cikti dizini: {output_dir}"
+        )
+
+    return written_paths
